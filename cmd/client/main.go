@@ -43,13 +43,18 @@ type PeerEntry struct {
 }
 
 // NewClient creates a new HolePunch client
-func NewClient(serverAddr string) (*Client, error) {
-	server, err := net.ResolveUDPAddr("udp", serverAddr)
+func NewClient(serverAddr string, useIPv6 bool) (*Client, error) {
+	network := "udp4"
+	if useIPv6 {
+		network = "udp6"
+	}
+
+	server, err := net.ResolveUDPAddr(network, serverAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve server address: %w", err)
 	}
 
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+	conn, err := net.ListenUDP(network, &net.UDPAddr{Port: 0})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create socket: %w", err)
 	}
@@ -409,9 +414,10 @@ func (c *Client) Shutdown() {
 
 func main() {
 	serverAddr := flag.String("server", "localhost:41234", "Orchestration server address")
+	ipv6 := flag.Bool("6", false, "Use IPv6 instead of IPv4")
 	flag.Parse()
 
-	client, err := NewClient(*serverAddr)
+	client, err := NewClient(*serverAddr, *ipv6)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}

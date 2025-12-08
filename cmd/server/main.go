@@ -31,13 +31,18 @@ type Server struct {
 }
 
 // NewServer creates a new orchestration server
-func NewServer(addr string) (*Server, error) {
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+func NewServer(addr string, useIPv6 bool) (*Server, error) {
+	network := "udp4"
+	if useIPv6 {
+		network = "udp6"
+	}
+
+	udpAddr, err := net.ResolveUDPAddr(network, addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve address: %w", err)
 	}
 
-	conn, err := net.ListenUDP("udp", udpAddr)
+	conn, err := net.ListenUDP(network, udpAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen: %w", err)
 	}
@@ -289,10 +294,11 @@ func (s *Server) Shutdown() {
 func main() {
 	port := flag.Int("port", 41234, "UDP port to listen on")
 	bind := flag.String("bind", "0.0.0.0", "Address to bind to")
+	ipv6 := flag.Bool("6", false, "Use IPv6 instead of IPv4")
 	flag.Parse()
 
 	addr := fmt.Sprintf("%s:%d", *bind, *port)
-	server, err := NewServer(addr)
+	server, err := NewServer(addr, *ipv6)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
