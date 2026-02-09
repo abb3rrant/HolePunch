@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/abb3rrant/HolePunch/pkg/config"
 	"github.com/abb3rrant/HolePunch/pkg/protocol"
 )
 
@@ -24,14 +26,15 @@ type ClientInfo struct {
 
 // Server is the orchestration server
 type Server struct {
-	conn     *net.UDPConn
-	clients  map[[32]byte]*ClientInfo
-	mu       sync.RWMutex
-	shutdown chan struct{}
+	conn       *net.UDPConn
+	clients    map[[32]byte]*ClientInfo
+	mu         sync.RWMutex
+	shutdown   chan struct{}
+	maxClients int
 }
 
 // NewServer creates a new orchestration server
-func NewServer(addr string, useIPv6 bool) (*Server, error) {
+func NewServer(addr string, useIPv6 bool, maxClients int) (*Server, error) {
 	network := "udp4"
 	if useIPv6 {
 		network = "udp6"
@@ -48,15 +51,20 @@ func NewServer(addr string, useIPv6 bool) (*Server, error) {
 	}
 
 	return &Server{
-		conn:     conn,
-		clients:  make(map[[32]byte]*ClientInfo),
-		shutdown: make(chan struct{}),
+		conn:       conn,
+		clients:    make(map[[32]byte]*ClientInfo),
+		shutdown:   make(chan struct{}),
+		maxClients: maxClients,
 	}, nil
 }
 
 // Run starts the server
 func (s *Server) Run() error {
-	log.Printf("HolePunch server listening on %s", s.conn.LocalAddr().String())
+	log.Printf("%s", config.VersionInfo())
+	log.Printf("Listening on %s", s.conn.LocalAddr().String())
+	if s.maxClients > 0 {
+		log.Printf("Max clients: %d", s.maxClients)
+	}
 
 	// Start cleanup goroutine
 	go s.cleanupStaleClients()
@@ -118,6 +126,16 @@ func (s *Server) handleRegister(data []byte, addr *net.UDPAddr) {
 		return
 	}
 
+	s.mu.Lock()
+	// Enforce max clients (skip check if this client is already registered)
+	if s.maxClients > 0 {
+		if _, exists := s.clients[msg.ClientID]; !exists && len(s.clients) >= s.maxClients {
+			s.mu.Unlock()
+			log.Printf("Rejecting client %s: max clients (%d) reached", hex.EncodeToString(msg.ClientID[:8]), s.maxClients)
+			return
+		}
+	}
+
 	client := &ClientInfo{
 		ID:        msg.ClientID,
 		PublicKey: msg.PublicKey,
@@ -125,7 +143,6 @@ func (s *Server) handleRegister(data []byte, addr *net.UDPAddr) {
 		LastSeen:  time.Now(),
 	}
 
-	s.mu.Lock()
 	s.clients[msg.ClientID] = client
 	s.mu.Unlock()
 
@@ -292,18 +309,24 @@ func (s *Server) Shutdown() {
 }
 
 func main() {
-	port := flag.Int("port", 41234, "UDP port to listen on")
+	port := flag.Int("port", config.DefaultServerPort, "UDP port to listen on")
 	bind := flag.String("bind", "0.0.0.0", "Address to bind to")
 	ipv6 := flag.Bool("6", false, "Use IPv6 instead of IPv4")
+	maxClients := flag.Int("max-clients", 0, "Maximum connected clients (0 = unlimited)")
+	version := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
+	if *version {
+		fmt.Println(config.VersionInfo())
+		os.Exit(0)
+	}
+
 	addr := fmt.Sprintf("%s:%d", *bind, *port)
-	server, err := NewServer(addr, *ipv6)
+	server, err := NewServer(addr, *ipv6, *maxClients)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
-	log.Println("Starting HolePunch orchestration server...")
 	if err := server.Run(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
